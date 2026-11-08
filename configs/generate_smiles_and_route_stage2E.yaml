@@ -1,0 +1,38 @@
+seed: 20260812
+
+model:
+  checkpoint: runs/stage2_joint_v4/best
+  fallback_checkpoint: runs/stage2_route_v4/best
+
+generation:
+  # Number of de novo molecules to generate before route generation
+  num_molecules: 1000
+
+  # Unconditional SMILES generation
+  smiles_max_length: 160
+  smiles_temperature: 1.0
+  require_valid_smiles: False
+
+  # Route-generation constraints
+  route_forward_only: true
+  bb_constrained_decoding: true
+  reactant_graph_constrained_decoding: true
+  building_block_vocab_path: /home/xukai_cluster/datasets/synlad/data/pathway_data_train_with_pharmacophores.pkl
+
+  # Stage2E-v2 validity-aware decoding
+  validity_aware_decoding:
+    primary_do_sample: false
+    repair_beam_width: 4
+    repair_candidate_pool_size: 8
+    repair_max_tokens: 160
+    repair_length_penalty: 0.6
+    repair_temperature: 1.0
+    repair_top_k: null
+
+  # Route decoding
+  route_temperature: 1.0
+  route_do_sample: false
+  route_top_k: null
+
+  # Output
+  output_file: runs/generate_model_syn_stage2e_v2/generated_smiles_and_routes.jsonl

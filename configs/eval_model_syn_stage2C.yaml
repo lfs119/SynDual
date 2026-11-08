@@ -1,0 +1,34 @@
+seed: 20260812
+
+data:
+  root: /home/xukai_cluster/3D_Mol/synlad/boltz2_postprocessing_v4_2d_ph4_routefixed/dataset_v4_clean/splits_v2_set1_scaffold_set2_identity
+  test_file: set2_test_product_routes.jsonl
+  smiles_columns:
+    - product_smiles
+    - normalized_product_smiles
+    - canonical_product_smiles
+  route_token_fields:
+    - serialized_route_tokens_json
+    - serialized_route_tokens
+  route_model_mask_fields:
+    - serialized_route_model_mask_json
+    - predicted_by_model_mask
+  require_forward_only: true
+
+model:
+  checkpoint: runs/stage2_joint_v4/best
+  fallback_checkpoint: runs/stage2_route_v4/best
+
+evaluation:
+  batch_size: 48
+  bb_constrained_decoding: true
+  # reactant_graph_constrained_decoding: true
+  building_block_vocab_path: /home/xukai_cluster/datasets/synlad/data/pathway_data_train_with_pharmacophores.pkl
+  generation_mode: random
+  generation_examples: 500
+  unconditional_smiles_samples: 500
+  route_temperature: 1.0
+  route_do_sample: false
+  route_top_k: null
+  route_loss_mode: all_tokens
+  output_dir: runs/eval_model_syn

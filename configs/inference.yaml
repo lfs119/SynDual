@@ -1,0 +1,16 @@
+seed: 20260812
+
+model:
+  checkpoint: runs/stage2_joint_v4/best
+  fallback_checkpoint: runs/stage2_route_v4/best
+
+generation:
+  num_molecules: 100
+  smiles_temperature: 1.0
+  smiles_max_length: 202
+  route_temperature: 1.0
+  route_do_sample: false
+  route_top_k: null
+  route_forward_only: true
+  require_valid_smiles: true
+  output_file: runs/inference/generated_smiles_routes.jsonl

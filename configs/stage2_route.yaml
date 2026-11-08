@@ -1,0 +1,54 @@
+seed: 20260812
+
+data:
+  root: /home/xukai_cluster/3D_Mol/synlad/boltz2_postprocessing_v4_2d_ph4_routefixed/dataset_v4_clean/splits_v2_set1_scaffold_set2_identity
+  train_file: set2_train_product_routes.jsonl
+  val_file: set2_val_product_routes.jsonl
+  test_file: set2_test_product_routes.jsonl
+  smiles_columns:
+    - product_smiles
+    - normalized_product_smiles
+    - canonical_product_smiles
+  route_token_fields:
+    - serialized_route_tokens_json
+    - serialized_route_tokens
+  route_model_mask_fields:
+    - serialized_route_model_mask_json
+    - predicted_by_model_mask
+  require_forward_only: true
+
+backbone:
+  checkpoint: runs/stage1_set2_smiles/best
+  fallback_pretrained_model: ibm-research/GP-MoLFormer-Uniq
+  fallback_tokenizer_model: ibm/MoLFormer-XL-both-10pct
+  max_product_length: 202
+  freeze: true
+
+route:
+  tokenizer_model: ibm/MoLFormer-XL-both-10pct
+  # Source-level SynLaD routes have max length 93, but each molecule is
+  # sub-tokenized by MoLFormer. Run 01_inspect_set2.py before training.
+  # SynDual never silently truncates a synthesis route.
+  max_length: 1536    # 1536 - 1280
+  # Milestone 2 has no external reaction oracle, so predict the complete route.
+  # Experimental alternative: synlad_model_only
+  loss_mode: all_tokens
+  d_model: 512
+  num_layers: 4
+  num_heads: 8
+  dim_feedforward: 2048
+  dropout: 0.10
+
+training:
+  output_dir: runs/stage2_route_v4
+  epochs: 20
+  batch_size: 24
+  eval_batch_size: 48
+  gradient_accumulation_steps: 1
+  learning_rate: 2.0e-4
+  weight_decay: 0.01
+  warmup_ratio: 0.05
+  max_grad_norm: 1.0
+  precision: bf16
+  num_workers: 4
+  log_every: 100

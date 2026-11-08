@@ -1,0 +1,136 @@
+# SynDual Stage III v3
+# Factorized Position-Preserving Dual-Pocket Adapter
+#
+# OOD rationale from Stage-3 v2:
+#   * Set1 val/test are already Bemis-Murcko scaffold-disjoint from train.
+#   * Test T0 (seen target pair) transferred much better than T1
+#     (new pair of two individually seen targets), exposing weak compositional
+#     target-pair generalization.
+#   * v2 zero-prefix NLL was far above unconditional NLL, showing that
+#     prepending virtual tokens disturbed the frozen GP-MoLFormer positions.
+#
+# V3 therefore:
+#   1) preserves the original SMILES length/positions;
+#   2) factorizes A-only, B-only and A/B interaction conditioning;
+#   3) adds single-pocket auxiliary grounding;
+#   4) keeps v2 A/B/Both hard-negative ranking.
+
+seed: 20260812
+device: auto
+
+model:
+  # Set2-trained SynthesisAwareModel / GP-MoLFormer-Uniq checkpoint.
+  # Train v3 FROM STAGE 2, not from a v2 pocket-adapter checkpoint.
+  stage2_checkpoint: ../runs/stage2_joint_v4/best
+
+  stage3_output_dir: ../outputs/stage3_dual_pocket_v3_factorized
+  stage3_checkpoint: ../outputs/stage3_dual_pocket_v3_factorized/best
+
+  conditioning_mode: position_preserving
+  conditioning_probe_report: ../outputs/stage3_dual_pocket_v3_factorized/conditioning_probe.json
+
+data:
+  # Existing Set1 scaffold split. Do NOT re-split.
+  split_root: /home/xukai_cluster/3D_Mol/synlad/boltz2_postprocessing_v4_2d_ph4_routefixed/dataset_v4_clean/splits_v2_set1_scaffold_set2_identity
+
+  # Produced by postprocess_boltz2_complexes_v4_2d_ph4_dualtarget_routefixed.ipynb.
+  pocket_context_csv: /home/xukai_cluster/3D_Mol/synlad/boltz2_postprocessing_v4_2d_ph4_routefixed/pocket_context_8A.csv
+
+  strict_pocket_metadata: true
+  alignment_output_dir: ../outputs/stage3_alignment
+
+pocket:
+  max_residues: 128
+  use_core_flag: false
+
+adapter:
+  # backbone_dim is read automatically from GP-MoLFormer-Uniq.
+  pocket_dim: 256
+  num_layers: 3
+  num_rbf: 32
+  rbf_max_distance: 24.0
+  num_queries: 8
+  num_heads: 8
+  conditioning_heads: 8
+  dropout: 0.0
+  use_core_flag: false
+
+  # Reusable A/B semantics start stronger than pair-specific interaction.
+  single_gate_init: -2.0
+  joint_gate_init: -3.0
+
+# Existing v2 hard-negative objective is retained.
+ranking:
+  enabled: true
+  lambda: 0.20
+  margin: 0.05
+  types: [a, b, both]
+
+# OOD-motivated individual-pocket grounding.
+# Each dual-target positive (A,B,M) also supervises (A,M) and (B,M).
+single_grounding:
+  enabled: true
+  lambda: 0.20
+  sides: [a, b]
+
+  # Short warm-up emphasizes reusable single-pocket semantics before the full
+  # joint/ranking objective. Disable with warmup_epochs: 0 for an ablation.
+  warmup_epochs: 3
+  warmup_single_lambda: 1.0
+  warmup_joint_weight: 0.25
+  warmup_rank_weight: 0.0
+
+# Validation remains scaffold-OOD. Ligand-macro avoids overweighting ligands
+# represented by many dual-target records. Test is never used for selection.
+model_selection:
+  aggregation: ligand_macro
+  metric: conditional_nll
+
+training:
+  batch_size: 8
+  num_workers: 0
+  max_smiles_length: 192
+  epochs: 30
+  early_stopping_patience: 6
+  lr: 0.0002
+  weight_decay: 0.01
+  gradient_accumulation_steps: 1
+  grad_clip: 1.0
+
+  # Keep FP32: real v1 prefix training showed non-finite FP16 losses.
+  amp: false
+  overwrite_train_log: true
+
+generation:
+  num_molecules: 32
+  batch_size: 16
+  max_attempts: 50
+  smiles_max_length: 160
+  smiles_temperature: 1.0
+  smiles_top_k: null
+  smiles_top_p: 0.95
+  smiles_do_sample: true
+  start_token_id: null
+  end_token_id: null
+  require_valid_smiles: true
+  unique_smiles: true
+
+  route_forward_only: true
+  route_do_sample: false
+  route_temperature: 1.0
+  route_top_k: null
+
+  bb_constrained_decoding: false
+  building_block_vocab_path: null
+  reactant_graph_constrained_decoding: true
+
+  validity_aware_decoding:
+    primary_do_sample: false
+    repair_beam_width: 4
+    repair_candidate_pool_size: 8
+    repair_max_tokens: 160
+    repair_length_penalty: 0.6
+    repair_temperature: 1.0
+    repair_top_k: null
+
+  output_file: ../outputs/stage3_v3_generated.jsonl

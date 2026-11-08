@@ -1,0 +1,39 @@
+seed: 20260812
+
+data:
+  root: /home/xukai_cluster/3D_Mol/synlad/boltz2_postprocessing_v4_2d_ph4_routefixed/dataset_v4_clean/splits_v2_set1_scaffold_set2_identity
+  train_file: set2_train_product_routes.jsonl
+  val_file: set2_val_product_routes.jsonl
+  test_file: set2_test_product_routes.jsonl
+  smiles_columns:
+    - product_smiles
+    - normalized_product_smiles
+    - canonical_product_smiles
+  route_token_fields:
+    - serialized_route_tokens_json
+    - serialized_route_tokens
+  route_model_mask_fields:
+    - serialized_route_model_mask_json
+    - predicted_by_model_mask
+  require_forward_only: true
+
+model:
+  checkpoint: runs/stage2_route_v4/best
+
+training:
+  output_dir: runs/stage2_joint_v4
+  epochs: 3
+  batch_size: 16
+  eval_batch_size: 32
+  gradient_accumulation_steps: 1
+  backbone_learning_rate: 1.0e-6
+  route_learning_rate: 5.0e-5
+  weight_decay: 0.01
+  warmup_ratio: 0.05
+  max_grad_norm: 1.0
+  precision: bf16
+  num_workers: 4
+  log_every: 100
+  route_loss_weight: 1.0
+  smiles_loss_weight: 0.20
+  route_loss_mode: all_tokens

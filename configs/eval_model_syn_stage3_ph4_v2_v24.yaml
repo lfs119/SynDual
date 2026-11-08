@@ -1,0 +1,287 @@
+# SynDual Stage III PH4_v2.4
+# V3A + residue-local pharmacophore auxiliary pocket grounding
+#
+# IMPORTANT:
+#   PH4_v2 is used only as an auxiliary TRAINING target.
+#   No ground-truth PH4 feature is provided to the generator at inference.
+#   Free-running generation therefore remains conditioned only on pocket geometry.
+#
+# Purpose:
+#   1) Load the frozen Stage-2 GP-MoLFormer / synthesis model.
+#   2) Load the trained PH4_v2.4 pocket adapter.
+#   3) Run the same six-condition free-running SMILES generation benchmark as V3A/PH4_v1:
+#        correct_ab / wrong_a / wrong_b / wrong_both /
+#        zero_condition / unconditional
+#   4) Reuse the Stage-2E synthesis-route decoding protocol unchanged.
+#
+# Recommended smoke test:
+#   10 val records x 6 conditions x 16 samples = 960 raw generations.
+#
+# Recommended full test:
+#   291 test records x 6 conditions x 16 samples = 27,936 raw generations.
+
+seed: 20260812
+device: auto
+
+
+# ============================================================
+# Model
+# ============================================================
+model:
+  # Frozen Set2-trained SynthesisAwareModel / GP-MoLFormer-Uniq.
+  stage2_checkpoint: ../runs/stage2_joint/best
+
+  # PH4_v2.4 triple-guard output/checkpoint.
+  stage3_output_dir: ../outputs/stage3_ph4_v2_local_v24_triple_guard
+  stage3_checkpoint: ../outputs/stage3_ph4_v2_local_v24_triple_guard/best
+
+  conditioning_mode: position_preserving
+
+  conditioning_probe_report: ../outputs/stage3_ph4_v2_local_v24_triple_guard/conditioning_probe.json
+
+
+# ============================================================
+# Data
+# ============================================================
+data:
+  # Existing Set1 scaffold split. Do NOT re-split.
+  split_root: /home/xukai_cluster/3D_Mol/synlad/boltz2_postprocessing_v4_2d_ph4_routefixed/dataset_v4_clean/splits_v2_set1_scaffold_set2_identity
+
+  # 8 Å pocket-context table produced by the Boltz-2 post-processing workflow.
+  pocket_context_csv: /home/xukai_cluster/3D_Mol/synlad/boltz2_postprocessing_v4_2d_ph4_routefixed/pocket_context_8A.csv
+
+  # Training provenance only. Residue-local PH4_v2 targets are NOT inference inputs.
+  ph4_local_target_csv: /home/xukai_cluster/3D_Mol/synlad/boltz2_postprocessing_v4_2d_ph4_routefixed/ph4_local_targets_v2_1.csv
+
+  strict_pocket_metadata: true
+  alignment_output_dir: ../outputs/stage3_alignment
+
+  # Keep the Stage-2E forward-only synthesis protocol.
+  require_forward_only: true
+
+
+# ============================================================
+# Pocket encoder
+# ============================================================
+pocket:
+  max_residues: 128
+  use_core_flag: false
+
+
+# ============================================================
+# PH4_v2.4 adapter
+# ============================================================
+adapter:
+  # backbone_dim is inferred automatically from GP-MoLFormer-Uniq.
+  pocket_dim: 256
+  num_layers: 3
+
+  num_rbf: 32
+  rbf_max_distance: 24.0
+
+  num_queries: 8
+  num_heads: 8
+  conditioning_heads: 8
+
+  dropout: 0.0
+  use_core_flag: false
+
+  # Same V3A initialization.
+  single_gate_init: -2.0
+  joint_gate_init: -3.0
+
+  # PH4_v2 residue-local auxiliary head.
+  # This head is present in the saved adapter state but is NOT used to condition
+  # free-running SMILES generation.
+  ph4_local_aux_enabled: true
+  ph4_local_num_types: 6
+  ph4_local_hidden_dim: 256
+  ph4_local_dropout: 0.0
+
+
+# ============================================================
+# PH4_v2.4 training provenance
+# ============================================================
+
+# Strict SAME-CONDITION triple-baseline gate used before PH4_v2.4 training.
+# This block is retained only for checkpoint provenance; it is not an
+# inference-time conditioning input.
+baseline_guard:
+  enabled: true
+  v3a_checkpoint: ../outputs/stage3_dual_pocket_v3_variantA_single_rank/best
+  ph4_v1_checkpoint: ../outputs/stage3_v4_ph4_aux/best
+  historical_v3a_metrics: ../outputs/stage3_dual_pocket_v3_variantA_single_rank/final_metrics.json
+  historical_ph4_v1_metrics: ../outputs/stage3_v4_ph4_aux/final_metrics.json
+  atol: 1.0e-6
+  abort_on_mismatch: true
+
+# Residue-local PH4_v2 auxiliary supervision.
+ph4_v2_auxiliary:
+  enabled: true
+  lambda: 0.01
+  num_types: 6
+  hidden_dim: 256
+  dropout: 0.0
+
+  # Formal policy: hard-negative pockets are not assigned the current ligand's
+  # residue-local PH4 labels.
+  negative_policy: positive_only
+
+  # Per PH4 type, positive-support and local-zero cells are balanced 50:50.
+  positive_fraction_weight: 0.50
+
+  target_semantics: per_residue_any_feature_model_frequency
+  absent_type_policy: mask_entire_type_not_zero
+  local_zero_policy: supervise_zero_for_noninteracting_residues_when_type_present
+
+# Dual-pocket hard-negative ranking: unchanged from V3A.
+ranking:
+  enabled: true
+  lambda: 0.20
+  margin: 0.05
+  types: [a, b, both]
+
+# Individual-pocket grounding: unchanged from V3A.
+single_grounding:
+  enabled: true
+  lambda: 0.20
+  sides: [a, b]
+
+  warmup_epochs: 3
+  warmup_single_lambda: 1.0
+  warmup_joint_weight: 0.25
+  warmup_rank_weight: 0.0
+
+# Single-pocket specificity ranking: unchanged from V3A.
+single_ranking:
+  enabled: true
+  lambda: 0.20
+  margin: 0.05
+  sides: [a, b]
+  warmup_weight: 0.50
+
+# Validation-only model selection.
+# PH4_v2 diagnostics never select the checkpoint; V3A ligand-macro conditional NLL
+# is retained exactly for a controlled V3A -> PH4_v2 comparison.
+model_selection:
+  aggregation: ligand_macro
+  mode: metric
+  metric: conditional_nll
+  base_metric: conditional_nll
+
+
+# ============================================================
+# Training settings retained for checkpoint reproducibility
+# ============================================================
+training:
+  batch_size: 8
+  num_workers: 0
+
+  max_smiles_length: 192
+
+  epochs: 30
+  early_stopping_patience: 6
+
+  lr: 0.0002
+  weight_decay: 0.01
+
+  gradient_accumulation_steps: 1
+  grad_clip: 1.0
+
+  # Keep FP32.
+  amp: false
+
+  overwrite_train_log: true
+
+
+# ============================================================
+# PH4_v2.4 free-running SMILES generation
+# ============================================================
+generation:
+  # Match the formal V3A / PH4_v1 benchmark exactly.
+  # CLI --num-molecules overrides this value.
+  num_molecules: 16
+
+  # Retained for compatibility with existing generation utilities.
+  batch_size: 16
+
+  # Full-prefix autoregressive position-preserving decoding.
+  # Pocket conditioning is reapplied at every decoding step.
+  smiles_max_length: 160
+  smiles_temperature: 1.0
+  smiles_top_k: null
+  smiles_top_p: 0.95
+
+  # Must remain true for distributional generation when num_molecules > 1.
+  smiles_do_sample: true
+
+  start_token_id: null
+  end_token_id: null
+
+  # IMPORTANT:
+  # Do not pre-filter invalid or duplicate SMILES during the formal benchmark.
+  # Raw generations must be retained so validity and uniqueness are measured
+  # on the true sampled distribution.
+  # Therefore intentionally omit:
+  #   require_valid_smiles: true
+  #   unique_smiles: true
+  #   max_attempts: 50
+
+  # Fallback route settings. Formal Stage-2E settings are below.
+  route_forward_only: true
+  route_do_sample: false
+  route_temperature: 1.0
+  route_top_k: null
+
+  reactant_graph_constrained_decoding: true
+
+
+# ============================================================
+# Stage-2E synthesis-route evaluation protocol
+# ============================================================
+# Kept identical to PH4_v1 / eval_model_syn_stage3A.yaml so the comparison
+# changes only the trained pocket adapter.
+evaluation:
+  batch_size: 48
+
+  # Keep Stage-2 synthesis constraints unchanged.
+  bb_constrained_decoding: true
+  reactant_graph_constrained_decoding: true
+
+  validity_aware_decoding:
+    primary_do_sample: false
+
+    # Stage-2E names.
+    beam_width: 4
+    candidate_pool_size: 8
+    max_molecule_tokens: 160
+    length_penalty: 0.6
+
+    repair_temperature: 1.0
+    repair_top_k: null
+
+  building_block_vocab_path: /home/xukai_cluster/datasets/synlad/data/pathway_data_train_with_pharmacophores.pkl
+
+  # Deterministic route decoding.
+  route_temperature: 1.0
+  route_do_sample: false
+  route_top_k: null
+
+  route_loss_mode: all_tokens
+
+  # Historical Stage-2E fields retained for provenance.
+  generation_mode: random
+  generation_examples: 500
+  unconditional_smiles_samples: 500
+
+  # The Stage-3 generation script uses --output-dir instead.
+  output_dir: ../outputs/stage3_ph4_v2_v24_generation
+
+
+# ============================================================
+# Recommended output locations
+# ============================================================
+outputs:
+  smoke_generation_only: ../outputs/stage3_ph4_v2_v24_generation/smoke_val10_generation_only
+  smoke_full: ../outputs/stage3_ph4_v2_v24_generation/smoke_val10_full
+  test_full: ../outputs/stage3_ph4_v2_v24_generation/test_all

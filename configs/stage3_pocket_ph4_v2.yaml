@@ -1,0 +1,120 @@
+# SynDual Stage III: PH4_v2 local interaction-propensity auxiliary grounding
+# Base model/objective = V3A. Only the training-time PH4 auxiliary target changes.
+
+seed: 20260812
+device: auto
+
+model:
+  stage2_checkpoint: ../runs/stage2_joint_v4/best
+  stage3_output_dir: ../outputs/stage3_ph4_v2_local_v24_triple_guard
+  stage3_checkpoint: ../outputs/stage3_ph4_v2_local_v24_triple_guard/best
+  conditioning_mode: position_preserving
+  conditioning_probe_report: ../outputs/stage3_ph4_v2_local_v24_triple_guard/conditioning_probe.json
+
+data:
+  split_root: /home/xukai_cluster/3D_Mol/synlad/boltz2_postprocessing_v4_2d_ph4_routefixed/dataset_v4_clean/splits_v2_set1_scaffold_set2_identity
+  pocket_context_csv: /home/xukai_cluster/3D_Mol/synlad/boltz2_postprocessing_v4_2d_ph4_routefixed/pocket_context_8A.csv
+  ph4_local_target_csv: /home/xukai_cluster/3D_Mol/synlad/boltz2_postprocessing_v4_2d_ph4_routefixed/ph4_local_targets_v2_1.csv
+  strict_pocket_metadata: true
+  alignment_output_dir: ../outputs/stage3_alignment
+
+pocket:
+  max_residues: 128
+  use_core_flag: false
+
+adapter:
+  pocket_dim: 256
+  num_layers: 3
+  num_rbf: 32
+  rbf_max_distance: 24.0
+  num_queries: 8
+  num_heads: 8
+  conditioning_heads: 8
+  dropout: 0.0
+  use_core_flag: false
+  single_gate_init: -2.0
+  joint_gate_init: -3.0
+
+  # Training-only residue-level PH4_v2 head. It is serialized in the checkpoint
+  # but is never queried by the generation path.
+  ph4_local_aux_enabled: true
+  ph4_local_num_types: 6
+  ph4_local_hidden_dim: 256
+  ph4_local_dropout: 0.0
+
+# PH4_v2.4: strict SAME-CONDITION triple-baseline gate.
+# Before epoch 1, V3A, PH4_v1 and the untrained PH4_v2 candidate are all
+# re-evaluated with the same unchanged evaluate_model(), same Set1 test loader,
+# same batch size/order and the same CUDA device. Both unconditional and zero
+# must agree per record. Historical metrics are diagnostic only.
+baseline_guard:
+  enabled: true
+  v3a_checkpoint: ../outputs/stage3_dual_pocket_v3_variantA_single_rank/best
+  ph4_v1_checkpoint: ../outputs/stage3_v4_ph4_aux/best
+  historical_v3a_metrics: ../outputs/stage3_dual_pocket_v3_variantA_single_rank/final_metrics.json
+  historical_ph4_v1_metrics: ../outputs/stage3_v4_ph4_aux/final_metrics.json
+  atol: 1.0e-6
+  abort_on_mismatch: true
+
+ph4_v2_auxiliary:
+  enabled: true
+  # Lower than PH4_v1 (0.05) because the previous global auxiliary target
+  # overfit validation and degraded held-out conditioning. Start conservatively.
+  lambda: 0.01
+  num_types: 6
+  hidden_dim: 256
+  dropout: 0.0
+
+  # Formal policy: do not apply current-record PH4 labels to hard negatives.
+  negative_policy: positive_only
+
+  # Residue-local positives are sparse inside the 8-A pocket. Per PH4 type,
+  # positive-support and local-zero cells are normalized separately and mixed
+  # 50:50 so negatives cannot dominate by count.
+  positive_fraction_weight: 0.50
+
+  target_semantics: per_residue_any_feature_model_frequency
+  absent_type_policy: mask_entire_type_not_zero
+  local_zero_policy: supervise_zero_for_noninteracting_residues_when_type_present
+
+ranking:
+  enabled: true
+  lambda: 0.20
+  margin: 0.05
+  types: [a, b, both]
+
+single_grounding:
+  enabled: true
+  lambda: 0.20
+  sides: [a, b]
+  warmup_epochs: 3
+  warmup_single_lambda: 1.0
+  warmup_joint_weight: 0.25
+  warmup_rank_weight: 0.0
+
+single_ranking:
+  enabled: true
+  lambda: 0.20
+  margin: 0.05
+  sides: [a, b]
+  warmup_weight: 0.50
+
+# Preserve V3A selection exactly. PH4_v2 diagnostic quality never selects a checkpoint.
+model_selection:
+  aggregation: ligand_macro
+  mode: metric
+  metric: conditional_nll
+  base_metric: conditional_nll
+
+training:
+  batch_size: 8
+  num_workers: 0
+  max_smiles_length: 192
+  epochs: 30
+  early_stopping_patience: 6
+  lr: 0.0002
+  weight_decay: 0.01
+  gradient_accumulation_steps: 1
+  grad_clip: 1.0
+  amp: false
+  overwrite_train_log: true
