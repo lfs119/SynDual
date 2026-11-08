@@ -192,8 +192,8 @@ CUDA_VISIBLE_DEVICES=0 python scripts/generate_stage3_pocket_and_route_ph4_v2.py
     --num-molecules 16 \
     --output-dir path/to/outputs/stage3_ph4_v2_generation/test
 ```
-
 The generated molecules and their synthesis-route predictions are saved under the directory specified by `--output-dir`.
+
 ---
 
 ## License
